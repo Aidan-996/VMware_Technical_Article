@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VMware 快照管理踩坑指南 — 快照膨胀、删除卡住的处理</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: #f0f2f5; color: #333; line-height: 1.8; font-size: 15px;
+  }
+  .article { max-width: 680px; margin: 0 auto; background: #fff; min-height: 100vh; }
+  .cover {
+    background: linear-gradient(135deg, #2d8cf0, #1a5fb4);
+    padding: 48px 32px 40px; text-align: center;
+  }
+  .cover h1 { font-size: 26px; color: #fff; font-weight: 700; line-height: 1.4; }
+  .cover .subtitle { color: rgba(255,255,255,0.75); font-size: 14px; margin-top: 12px; }
+  .cover .tag {
+    display: inline-block; background: rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.9); padding: 4px 14px; border-radius: 20px;
+    font-size: 12px; margin-top: 16px;
+  }
+  .content { padding: 28px 24px 40px; }
+  .lead {
+    background: #f0f7ff; border-left: 3px solid #2d8cf0;
+    padding: 14px 18px; border-radius: 0 6px 6px 0;
+    margin-bottom: 28px; font-size: 14px; color: #666;
+  }
+  h2 {
+    font-size: 19px; color: #1a1a1a; margin: 32px 0 14px;
+    padding-left: 12px; border-left: 4px solid #2d8cf0;
+  }
+  h3 { font-size: 16px; color: #333; margin: 22px 0 10px; }
+  p { margin: 10px 0; }
+  strong { color: #1a1a1a; }
+  hr { border: none; height: 1px; background: #eee; margin: 28px 0; }
+
+  .warn-box {
+    background: #fff1f0; border: 1px solid #ffa39e; border-radius: 8px;
+    padding: 14px 18px; margin: 16px 0; font-size: 14px; color: #cf1322;
+  }
+  .warn-box strong { color: #cf1322; }
+  .info-box {
+    background: #f0f7ff; border: 1px solid #91d5ff; border-radius: 8px;
+    padding: 14px 18px; margin: 16px 0; font-size: 14px; color: #096dd9;
+  }
+  .highlight-box {
+    background: #fff7e6; border: 1px solid #ffd591; border-radius: 8px;
+    padding: 14px 20px; margin: 16px 0; text-align: center;
+    font-size: 15px; font-weight: 600; color: #d46b08;
+  }
+
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
+  table th {
+    background: #2d8cf0; color: #fff; padding: 10px 14px;
+    text-align: left; font-size: 13px;
+  }
+  table td { padding: 10px 14px; border-bottom: 1px solid #f0f0f0; }
+  table tr:nth-child(even) td { background: #fafafa; }
+  table tr:hover td { background: #f0f7ff; }
+
+  pre {
+    background: #282c34; color: #abb2bf; padding: 16px; border-radius: 6px;
+    font-size: 13px; line-height: 1.6; overflow-x: auto; margin: 12px 0;
+    font-family: Consolas, "Courier New", monospace;
+  }
+  .cm { color: #5c6370; }
+  .kw { color: #c678dd; }
+  .str { color: #98c379; }
+  .var { color: #e06c75; }
+  .num { color: #d19a66; }
+
+  .chain-box {
+    background: #1e293b; border-radius: 8px; padding: 20px; margin: 16px 0;
+    color: #e0e0e0; font-family: Consolas, monospace; font-size: 13px; line-height: 1.8;
+  }
+  .chain-box .base { color: #52c41a; }
+  .chain-box .delta { color: #fa8c16; }
+  .chain-box .current { color: #f5222d; }
+
+  .pit-card {
+    background: #fff; border: 1px solid #e8e8e8; border-radius: 10px;
+    padding: 18px 20px; margin: 16px 0;
+    border-left: 4px solid #fa8c16;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+  }
+  .pit-card.danger { border-left-color: #f5222d; }
+  .pit-card.info { border-left-color: #2d8cf0; }
+  .pit-card h4 {
+    font-size: 15px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;
+  }
+  .pit-card h4 .pit-tag {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600;
+  }
+  .tag-warn { background: #fff7e6; color: #d46b08; border: 1px solid #ffd591; }
+  .tag-danger { background: #fff1f0; color: #cf1322; border: 1px solid #ffa39e; }
+  .tag-fix { background: #f6ffed; color: #389e0d; border: 1px solid #b7eb8f; }
+
+  .scene-card {
+    background: #f7f8fa; border-radius: 8px; padding: 16px 18px; margin: 12px 0;
+    border-left: 3px solid #2d8cf0;
+  }
+  .scene-card h4 { font-size: 14px; color: #2d8cf0; margin-bottom: 8px; }
+  .scene-card p { font-size: 13px; color: #666; margin: 4px 0; }
+
+  .consequence-list { list-style: none; padding: 0; margin: 14px 0; }
+  .consequence-list li {
+    padding: 8px 14px; margin: 6px 0; background: #fff5f5;
+    border-radius: 6px; border-left: 3px solid #f5222d; font-size: 14px; color: #555;
+  }
+  .consequence-list li strong { color: #cf1322; }
+
+  .best-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0;
+  }
+  .best-item {
+    background: #f7f8fa; border-radius: 8px; padding: 12px 14px;
+    border-left: 3px solid #52c41a; font-size: 13px;
+  }
+  .best-item strong { color: #389e0d; display: block; margin-bottom: 4px; }
+
+  .err-table th { background: #f0f2f5; color: #333; border-bottom: 2px solid #e8e8e8; }
+  .err-table td:first-child { color: #cf1322; font-family: Consolas, monospace; font-size: 12px; }
+
+  .checklist { list-style: none; padding: 0; margin: 10px 0; }
+  .checklist li {
+    padding: 6px 0 6px 24px; font-size: 14px; position: relative; color: #555;
+  }
+  .checklist li::before {
+    content: ''; position: absolute; left: 2px; top: 12px;
+    width: 12px; height: 12px; border: 2px solid #2d8cf0; border-radius: 3px;
+  }
+
+  .next-box {
+    background: #f0f7ff; border-radius: 8px; padding: 18px 22px;
+    margin: 20px 0; border: 1px dashed #91d5ff;
+  }
+  .next-box h4 { color: #2d8cf0; margin-bottom: 10px; font-size: 15px; }
+  .next-box ul { list-style: none; padding: 0; }
+  .next-box li { padding: 4px 0; font-size: 14px; color: #555; }
+  .next-box li::before { content: '> '; color: #2d8cf0; font-weight: bold; }
+
+  .cta {
+    text-align: center; padding: 24px 20px; margin: 24px 0;
+    background: #fffbe6; border-radius: 8px; border: 1px solid #ffe58f;
+  }
+  .cta .main { font-size: 16px; font-weight: 600; color: #d48806; }
+  .cta .sub { font-size: 13px; color: #999; margin-top: 6px; }
+  .footer {
+    text-align: center; color: #ccc; font-size: 12px;
+    padding: 20px 0 30px; border-top: 1px solid #f0f0f0; margin-top: 24px;
+  }
+
+  @media (max-width: 480px) {
+    .cover { padding: 36px 20px 30px; }
+    .cover h1 { font-size: 22px; }
+    .content { padding: 20px 16px 30px; }
+    .best-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="article">
+
+  <div class="cover">
+    <h1>VMware 快照管理踩坑指南<br>快照膨胀、删除卡住的处理</h1>
+    <p class="subtitle">原理解析 | 6 大故障场景 | 完整排查流程 | PowerCLI 脚本</p>
+    <span class="tag">实战指南 · 附紧急处理 Checklist</span>
+  </div>
+
+  <div class="content">
+
+    <div class="lead">
+      快照是 VMware 运维中最常用也最容易翻车的功能。这篇文章从原理出发，系统梳理快照膨胀、删除卡住、合并失败等常见问题，附带完整的排查流程和处理方案。
+    </div>
+
+    <div class="warn-box">
+      <strong>快照不是备份！快照不是备份！快照不是备份！</strong><br>
+      快照只是一个时间冻结点，不能替代 Veeam / NBU 等专业备份工具。长期保留快照 = 给自己埋雷。
+    </div>
+
+    <!-- ==================== 原理 ==================== -->
+    <h2>快照到底是什么？</h2>
+    <p>创建快照时，VMware 做了三件事：</p>
+    <ol style="margin:10px 0 10px 20px;font-size:14px;color:#555;">
+      <li>原始磁盘变为 <strong>只读</strong>，创建 <strong>delta 文件</strong>（<code style="background:#f0f0f0;padding:2px 6px;border-radius:3px;">-000001.vmdk</code>）</li>
+      <li>所有新写入 <strong>全部进入 delta 文件</strong></li>
+      <li>delta 文件 <strong>只增不减</strong>，VM 内部删文件也不会缩小</li>
+    </ol>
+
+    <div class="chain-box">
+      <span class="base">base.vmdk (200GB, 只读)</span><br>
+      &nbsp;&nbsp;└── <span class="delta">delta-000001.vmdk (快照1后的写入)</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="delta">delta-000002.vmdk (快照2后的写入)</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="current">delta-000003.vmdk (当前写入点)</span>
+    </div>
+
+    <div class="info-box">
+      <strong>删除快照 = 合并 delta 文件回父磁盘。</strong>这个合并过程需要大量 I/O 和临时空间，是所有问题的根源。
+    </div>
+
+    <hr>
+
+    <!-- ==================== 坑一：膨胀 ==================== -->
+    <h2>坑一：快照膨胀</h2>
+
+    <div class="pit-card danger">
+      <h4><span class="pit-tag tag-danger">真实翻车</span> SQL Server 快照忘了删</h4>
+      <p style="font-size:14px;color:#666;">
+        给一台 SQL Server VM 打了快照，"临时"用一下。<strong>3 个月后</strong>：<br>
+        base.vmdk = 200GB（只读没变）<br>
+        delta = <strong style="color:#cf1322;">180GB</strong>（3 个月的写入全在这里）<br>
+        数据存储从 60% 飙到 95%，触发告警。删除预计 <strong>8+ 小时</strong>。
+      </p>
+    </div>
+
+    <h3>膨胀速度取决于什么？</h3>
+    <table>
+      <thead><tr><th>因素</th><th>影响</th></tr></thead>
+      <tbody>
+        <tr><td><strong>VM 写入量</strong></td><td>数据库、日志密集型 VM 膨胀最快</td></tr>
+        <tr><td><strong>存活时间</strong></td><td>快照放 3 天和 3 个月，天差地别</td></tr>
+        <tr><td><strong>快照层数</strong></td><td>多层叠加，每层独立膨胀</td></tr>
+        <tr><td><strong>磁盘类型</strong></td><td>Thin Provisioning 的 VM 更难发现膨胀</td></tr>
+      </tbody>
+    </table>
+
+    <h3>膨胀的 5 大后果</h3>
+    <ul class="consequence-list">
+      <li><strong>存储爆满</strong> — 同一 datastore 上所有 VM 同时暂停</li>
+      <li><strong>删除巨慢</strong> — 180GB delta 合并要几小时到十几小时</li>
+      <li><strong>性能骤降</strong> — 合并期间 I/O 被吃掉，VM 明显卡顿</li>
+      <li><strong>合并失败</strong> — 空间不足时合并失败，可能丢数据</li>
+      <li><strong>vMotion 失败</strong> — 带大快照的 VM 迁不动</li>
+    </ul>
+
+    <hr>
+
+    <!-- ==================== 坑二：删除卡住 ==================== -->
+    <h2>坑二：快照删除卡住</h2>
+
+    <div class="pit-card">
+      <h4><span class="pit-tag tag-warn">卡在 0%</span> 通常是存储空间不足</h4>
+      <p style="font-size:13px;color:#666;">合并需要临时空间（约等于 delta 大小），空间不够就卡死。<br><strong>处理</strong>：先腾空间，再重试删除。</p>
+    </div>
+
+    <div class="pit-card">
+      <h4><span class="pit-tag tag-warn">卡在 95%</span> 数据已合并，卡在元数据更新</h4>
+      <p style="font-size:13px;color:#666;">数据合并完成了，最后一步重命名文件卡住。<br><strong>处理</strong>：<strong style="color:#cf1322;">不要取消任务！</strong>耐心等待。超过 24 小时再干预。</p>
+    </div>
+
+    <div class="pit-card danger">
+      <h4><span class="pit-tag tag-danger">最危险</span> 显示"无快照"但 delta 文件还在</h4>
+      <p style="font-size:13px;color:#666;">快照管理器空了，但文件系统里还有 <code>-000001.vmdk</code>。元数据与文件不一致。<br><strong>处理</strong>：VM → Snapshots → <strong>Consolidate</strong></p>
+    </div>
+
+    <div class="pit-card">
+      <h4><span class="pit-tag tag-warn">锁冲突</span> 报错 "File is locked"</h4>
+      <p style="font-size:13px;color:#666;">其他主机持有 SCSI 磁盘锁，合并无法获取独占访问。<br><strong>处理</strong>：<code>vmkfstools -D</code> 查锁，找到持有锁的主机 MAC，vMotion 后重试。</p>
+    </div>
+
+    <hr>
+
+    <!-- ==================== 6 大场景 ==================== -->
+    <h2>6 大故障场景处理方案</h2>
+
+    <div class="scene-card">
+      <h4>场景一：存储空间不足导致合并卡住</h4>
+      <p><strong>症状</strong>：任务卡 0%，datastore > 95%</p>
+      <p><strong>处理</strong>：腾空间 → 确保可用空间 > 最大 delta → 重试删除</p>
+    </div>
+
+    <pre><span class="cm"># SSH 到 ESXi，检查空间</span>
+<span class="kw">df</span> -h /vmfs/volumes/datastore1/
+
+<span class="cm"># 找最大的 delta 文件</span>
+<span class="kw">find</span> /vmfs/volumes/datastore1/ -name <span class="str">"*delta.vmdk"</span> \
+  -exec <span class="kw">ls</span> -lh {} \; | <span class="kw">sort</span> -k5 -hr | <span class="kw">head</span> <span class="num">-20</span></pre>
+
+    <div class="scene-card">
+      <h4>场景二：SCSI 磁盘锁冲突</h4>
+      <p><strong>症状</strong>：日志出现 "File is locked"</p>
+      <p><strong>处理</strong>：查锁 → 找持有者 → vMotion 后重试</p>
+    </div>
+
+    <pre><span class="cm"># 检查谁持有磁盘锁</span>
+<span class="kw">vmkfstools</span> -D /vmfs/volumes/ds/vm/<span class="var">vm-000001-delta.vmdk</span>
+
+<span class="cm"># 输出中的 MAC 地址 = 持有锁的主机</span>
+<span class="cm"># vMotion 到其他主机后重试</span></pre>
+
+    <div class="scene-card">
+      <h4>场景三：CBT（Changed Block Tracking）损坏</h4>
+      <p><strong>症状</strong>：Cannot open the disk</p>
+      <p><strong>处理</strong>：关机 → 禁用 CBT → 删除 CTK 文件 → 开机 → 重试</p>
+    </div>
+
+    <pre><span class="cm"># PowerCLI 禁用 CBT</span>
+<span class="var">$vm</span> = <span class="kw">Get-VM</span> <span class="str">"vm-name"</span>
+<span class="var">$spec</span> = <span class="kw">New-Object</span> VMware.Vim.VirtualMachineConfigSpec
+<span class="var">$spec</span>.changeTrackingEnabled = <span class="var">$false</span>
+<span class="var">$vm</span>.ExtensionData.ReconfigVM(<span class="var">$spec</span>)</pre>
+
+    <div class="scene-card">
+      <h4>场景四：快照链断裂（元数据不一致）</h4>
+      <p><strong>症状</strong>：快照管理器为空，但 delta 文件还在</p>
+      <p><strong>处理</strong>：先尝试 Consolidate → 失败则关机后 clone 重建</p>
+    </div>
+
+    <pre><span class="cm"># 关机后 clone 重建磁盘</span>
+<span class="kw">vmkfstools</span> -i <span class="var">vm-000001.vmdk</span> <span class="str">vm-consolidated.vmdk</span> -d thin
+
+<span class="cm"># 修改 .vmx 指向新磁盘，启动验证</span></pre>
+
+    <div class="scene-card">
+      <h4>场景五：VSS 快照失败（Windows VM）</h4>
+      <p><strong>症状</strong>：quiesce 快照创建/删除失败</p>
+      <p><strong>处理</strong>：VM 内部修复 VSS 服务</p>
+    </div>
+
+    <pre><span class="cm"># 在 Windows VM 内部执行</span>
+<span class="kw">vssadmin</span> list writers     <span class="cm"># 找不正常的 Writer</span>
+<span class="kw">Restart-Service</span> <span class="str">"VMware Snapshot Provider"</span> -Force
+<span class="kw">Restart-Service</span> <span class="str">"VSS"</span> -Force
+<span class="kw">vssadmin</span> delete shadows /all /quiet</pre>
+
+    <div class="scene-card">
+      <h4>场景六：合并超时（存储 I/O 慢）</h4>
+      <p><strong>症状</strong>：任务长时间无进展，存储延迟高</p>
+      <p><strong>处理</strong>：esxtop 查 KAVG（> 30ms 需关注），安排低峰期重试</p>
+    </div>
+
+    <hr>
+
+    <!-- ==================== PowerCLI ==================== -->
+    <h2>PowerCLI 快照管理脚本</h2>
+
+    <h3>快照健康检查</h3>
+    <pre><span class="cm"># 找出所有超过 24 小时的快照，按大小排序</span>
+<span class="kw">Get-VM</span> | <span class="kw">Get-Snapshot</span> | <span class="kw">Where-Object</span> {
+    <span class="var">$_</span>.Created -lt (<span class="kw">Get-Date</span>).AddHours(<span class="num">-24</span>)
+} | <span class="kw">Select-Object</span> VM, Name, Created,
+    @{N=<span class="str">'AgeDays'</span>;E={[math]::Round(((<span class="kw">Get-Date</span>)-<span class="var">$_</span>.Created).TotalDays,<span class="num">1</span>)}},
+    @{N=<span class="str">'SizeGB'</span>;E={[math]::Round(<span class="var">$_</span>.SizeGB,<span class="num">2</span>)}} |
+  <span class="kw">Sort-Object</span> SizeGB -Descending | <span class="kw">Format-Table</span> -AutoSize</pre>
+
+    <h3>检查需要 Consolidate 的 VM</h3>
+    <pre><span class="kw">Get-VM</span> | <span class="kw">Where-Object</span> {
+    <span class="var">$_</span>.ExtensionData.Runtime.ConsolidationNeeded
+} | <span class="kw">Select-Object</span> Name, PowerState</pre>
+
+    <h3>批量清理过期快照</h3>
+    <pre><span class="var">$cutoff</span> = (<span class="kw">Get-Date</span>).AddDays(<span class="num">-3</span>)
+<span class="var">$expired</span> = <span class="kw">Get-VM</span> | <span class="kw">Get-Snapshot</span> | <span class="kw">Where-Object</span> { <span class="var">$_</span>.Created -lt <span class="var">$cutoff</span> }
+
+<span class="cm"># 预览</span>
+<span class="var">$expired</span> | <span class="kw">Select-Object</span> VM, Name, Created, SizeGB | <span class="kw">Format-Table</span>
+
+<span class="cm"># 确认后执行删除</span>
+<span class="cm"># $expired | Remove-Snapshot -Confirm:$false</span></pre>
+
+    <hr>
+
+    <!-- ==================== 紧急 Checklist ==================== -->
+    <h2>紧急处理 Checklist</h2>
+
+    <h3>存储告急（> 90%）</h3>
+    <ul class="checklist">
+      <li>找出最大的快照：<code style="font-size:12px;">Get-VM -Datastore ds | Get-Snapshot | Sort SizeGB -Desc</code></li>
+      <li>优先删测试环境的快照</li>
+      <li>空间不够删？迁移小 VM 到其他存储</li>
+      <li>确保可用空间 > 最大 delta 后再删</li>
+      <li>从最新的快照开始删（减少合并量）</li>
+    </ul>
+
+    <h3>快照删除卡住</h3>
+    <ul class="checklist">
+      <li><strong style="color:#cf1322;">不要取消正在进行的任务！</strong></li>
+      <li>检查存储空间是否足够</li>
+      <li>SSH 查日志：<code style="font-size:12px;">grep snapshot /var/log/hostd.log | tail -20</code></li>
+      <li>检查磁盘锁：<code style="font-size:12px;">vmkfstools -D &lt;delta-file&gt;</code></li>
+      <li>尝试 Consolidate</li>
+      <li>以上都不行 → 关机后 clone 重建</li>
+      <li>最终方案 → 联系 VMware 支持（vm-support 收集诊断包）</li>
+    </ul>
+
+    <hr>
+
+    <!-- ==================== 最佳实践 ==================== -->
+    <h2>最佳实践</h2>
+
+    <div class="best-grid">
+      <div class="best-item"><strong>存活时间</strong>不超过 72 小时，24h 内最佳</div>
+      <div class="best-item"><strong>快照层数</strong>不超过 3 层，绝不超 10 层</div>
+      <div class="best-item"><strong>存储预留</strong>数据存储至少 20% 可用</div>
+      <div class="best-item"><strong>日常监控</strong>每日检查，超时自动告警</div>
+      <div class="best-item"><strong>数据库 VM</strong>避免长期保留快照</div>
+      <div class="best-item"><strong>备份替代</strong>用 Veeam/NBU 做长期保护</div>
+      <div class="best-item"><strong>操作时间</strong>业务低峰期操作</div>
+      <div class="best-item"><strong>快照命名</strong>创建人 + 原因 + 预期删除时间</div>
+    </div>
+
+    <hr>
+
+    <!-- ==================== 报错速查 ==================== -->
+    <h2>常见报错速查表</h2>
+
+    <table class="err-table">
+      <thead><tr><th>报错</th><th>处理</th></tr></thead>
+      <tbody>
+        <tr><td><strong>File is locked</strong></td><td>vmkfstools -D 查锁，vMotion 后重试</td></tr>
+        <tr><td><strong>No space left</strong></td><td>腾空间后重试</td></tr>
+        <tr><td><strong>Cannot open the disk</strong></td><td>文件损坏，clone 重建</td></tr>
+        <tr><td><strong>Consolidation needed</strong></td><td>VM → Snapshots → Consolidate</td></tr>
+        <tr><td><strong>quiescing error</strong></td><td>检查 VM 内 VSS 服务，重启 VMware Tools</td></tr>
+        <tr><td><strong>Too many redo logs</strong></td><td>快照 > 32 层，逐层合并或 clone</td></tr>
+        <tr><td><strong>Operation timed out</strong></td><td>存储慢，低峰期重试</td></tr>
+        <tr><td><strong>general system error</strong></td><td>查 hostd.log 和 vmkernel.log</td></tr>
+      </tbody>
+    </table>
+
+    <hr>
+
+    <h2>写在最后</h2>
+    <p>快照是一把双刃剑 — 用好了是临时保险，用不好就是定时炸弹。记住三条铁律：</p>
+
+    <div class="highlight-box">
+      1. 快照不是备份 &nbsp; 2. 不超过 72 小时 &nbsp; 3. 数据库 VM 慎用
+    </div>
+
+    <div class="next-box">
+      <h4>系列文章</h4>
+      <ul>
+        <li><strong>Linux 服务器巡检脚本（Bash 版）</strong></li>
+        <li><strong>Windows Server 安全加固巡检脚本（PowerShell 版）</strong></li>
+        <li><strong>VMware ESXi 巡检脚本（PowerCLI 版）</strong> — 即将发布</li>
+        <li><strong>如何搭建轻量级巡检平台</strong></li>
+      </ul>
+    </div>
+
+    <div class="cta">
+      <p class="main">觉得有用？点赞 + 收藏 + 转发</p>
+      <p class="sub">你的支持是我持续更新的动力！有问题欢迎评论区交流</p>
+    </div>
+
+    <div class="footer">本文基于 vSphere 6.7 / 7.0 / 8.0 验证，如有问题欢迎反馈</div>
+
+  </div>
+</div>
+</body>
+</html>
